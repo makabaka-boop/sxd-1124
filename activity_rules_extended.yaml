@@ -1,0 +1,71 @@
+global:
+  required_fields:
+    - 姓名
+    - 活动名称
+    - 金额
+  duplicate_check:
+    enabled: true
+    key_fields:
+      - 姓名
+      - 活动名称
+  default_amount_min: 0
+  default_amount_max: 5000
+  description: "手作体验活动数据清洗全局规则（扩展版）"
+
+activities:
+  陶艺手作:
+    amount_min: 0
+    amount_max: 3000
+    rule_description: "陶艺手作活动，单次金额应在0~3000元之间，适用于陶艺体验课程"
+    extra_required_fields: []
+
+  布艺缝纫:
+    amount_min: 0
+    amount_max: 2500
+    rule_description: "布艺缝纫活动，单次金额应在0~2500元之间，适用于布艺制作体验"
+    extra_required_fields: []
+
+  皮具制作:
+    amount_min: 0
+    amount_max: 5000
+    rule_description: "皮具制作活动，单次金额应在0~5000元之间，适用于高端皮具课程"
+    extra_required_fields: []
+
+  花艺插花:
+    amount_min: 0
+    amount_max: 2000
+    rule_description: "花艺插花活动，单次金额应在0~2000元之间，适用于花艺入门体验"
+    extra_required_fields: []
+
+  木工雕刻:
+    amount_min: 0
+    amount_max: 4000
+    rule_description: "木工雕刻活动，单次金额应在0~4000元之间，适用于木工制作体验"
+    extra_required_fields: []
+
+  扎染体验:
+    amount_min: 0
+    amount_max: 1800
+    rule_description: "扎染体验活动，单次金额应在0~1800元之间，适用于传统扎染入门"
+    extra_required_fields: []
+
+  刺绣工坊:
+    amount_min: 0
+    amount_max: 3500
+    rule_description: "刺绣工坊活动，单次金额应在0~3500元之间，适用于刺绣技艺课程"
+    extra_required_fields: []
+
+  手工香薰:
+    amount_min: 0
+    amount_max: 1500
+    rule_description: "手工香薰活动，单次金额应在0~1500元之间，适用于香薰制作体验"
+    extra_required_fields:
+      - 联系电话
+
+  金属锻造:
+    amount_min: 100
+    amount_max: 6000
+    rule_description: "金属锻造活动，单次金额应在100~6000元之间，适用于金属工艺体验，需要联系电话"
+    extra_required_fields:
+      - 联系电话
+      - 身份证号
