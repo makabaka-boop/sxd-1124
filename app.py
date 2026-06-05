@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import io
+import os
 from datetime import datetime
 
 VALID_ACTIVITIES = {"陶艺手作", "布艺缝纫", "皮具制作", "花艺插花", "木工雕刻", "扎染体验", "刺绣工坊"}
@@ -10,6 +11,26 @@ VALID_ACTIVITIES = {"陶艺手作", "布艺缝纫", "皮具制作", "花艺插�
 ROLE_ADMIN = "管理员"
 ROLE_USER = "普通用户"
 ROLE_AUDITOR = "审计员"
+
+
+def get_access_code(role):
+    env_name = "ADMIN_ACCESS_CODE" if role == ROLE_ADMIN else "AUDITOR_ACCESS_CODE"
+    secret_name = "admin_access_code" if role == ROLE_ADMIN else "auditor_access_code"
+    try:
+        return st.secrets.get(secret_name, os.environ.get(env_name, ""))
+    except Exception:
+        return os.environ.get(env_name, "")
+
+
+@st.cache_resource
+def get_shared_cache():
+    return {
+        "cleaned_df": None,
+        "errors_df": None,
+        "original_df": None,
+        "validation_done": False,
+        "updated_at": None,
+    }
 
 
 def init_session_state():
@@ -25,6 +46,50 @@ def init_session_state():
         st.session_state.validation_done = False
     if "original_df" not in st.session_state:
         st.session_state.original_df = None
+    if "current_upload_id" not in st.session_state:
+        st.session_state.current_upload_id = None
+
+
+def clear_results(clear_shared=False):
+    st.session_state.cleaned_df = None
+    st.session_state.errors_df = None
+    st.session_state.original_df = None
+    st.session_state.validation_done = False
+    if clear_shared:
+        shared_cache = get_shared_cache()
+        shared_cache["cleaned_df"] = None
+        shared_cache["errors_df"] = None
+        shared_cache["original_df"] = None
+        shared_cache["validation_done"] = False
+        shared_cache["updated_at"] = None
+
+
+def save_results(cleaned_df, errors_df, original_df):
+    st.session_state.cleaned_df = cleaned_df
+    st.session_state.errors_df = errors_df
+    st.session_state.original_df = original_df
+    st.session_state.validation_done = True
+
+    shared_cache = get_shared_cache()
+    shared_cache["cleaned_df"] = cleaned_df
+    shared_cache["errors_df"] = errors_df
+    shared_cache["original_df"] = original_df
+    shared_cache["validation_done"] = True
+    shared_cache["updated_at"] = datetime.now()
+
+
+def load_shared_results():
+    shared_cache = get_shared_cache()
+    if not shared_cache.get("validation_done"):
+        return
+    st.session_state.cleaned_df = shared_cache.get("cleaned_df")
+    st.session_state.errors_df = shared_cache.get("errors_df")
+    st.session_state.original_df = shared_cache.get("original_df")
+    st.session_state.validation_done = True
+
+
+def has_results():
+    return st.session_state.cleaned_df is not None or st.session_state.errors_df is not None
 
 
 def validate_row(row, row_idx, seen_signups):
@@ -100,13 +165,27 @@ def validate_dataframe(df):
 def render_sidebar():
     with st.sidebar:
         st.markdown("### 🔐 角色选择")
-        role = st.radio(
+        requested_role = st.radio(
             "选择当前角色",
             [ROLE_ADMIN, ROLE_USER, ROLE_AUDITOR],
             index=[ROLE_ADMIN, ROLE_USER, ROLE_AUDITOR].index(st.session_state.role),
             key="role_selector",
         )
-        st.session_state.role = role
+
+        if requested_role == ROLE_USER:
+            st.session_state.role = ROLE_USER
+        else:
+            access_code = st.text_input(f"{requested_role}访问码", type="password")
+            configured_code = get_access_code(requested_role)
+            if not configured_code:
+                st.warning(f"未配置{requested_role}访问码，暂不能切换到该角色。")
+                st.session_state.role = ROLE_USER
+            elif access_code == configured_code:
+                st.session_state.role = requested_role
+            else:
+                st.session_state.role = ROLE_USER
+                if access_code:
+                    st.error("访问码错误，已按普通用户权限访问。")
 
         st.markdown("---")
         st.markdown("### 📋 有效活动列表")
@@ -135,12 +214,18 @@ def render_upload_section():
 
     if uploaded_file is not None:
         try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
+            file_bytes = uploaded_file.getvalue()
+            upload_id = (uploaded_file.name, len(file_bytes))
+            if st.session_state.current_upload_id != upload_id:
+                st.session_state.current_upload_id = upload_id
+                clear_results()
 
-            st.session_state.original_df = df
+            file_buffer = io.BytesIO(file_bytes)
+            if uploaded_file.name.endswith(".csv"):
+                df = pd.read_csv(file_buffer)
+            else:
+                df = pd.read_excel(file_buffer)
+
             st.success(f"文件上传成功: {uploaded_file.name}，共 {len(df)} 行数据")
 
             with st.expander("原始数据预览", expanded=False):
@@ -150,18 +235,17 @@ def render_upload_section():
                 with st.spinner("正在逐行校验..."):
                     result = validate_dataframe(df)
                     if result[0] is None:
+                        clear_results(clear_shared=True)
                         return
                     cleaned_df, errors_df, all_errors = result
-                    st.session_state.cleaned_df = cleaned_df
-                    st.session_state.errors_df = errors_df
-                    st.session_state.validation_done = True
+                    save_results(cleaned_df, errors_df, df)
 
         except Exception as e:
             st.error(f"文件读取失败: {e}")
 
 
 def render_cleaned_results():
-    if st.session_state.cleaned_df is None and st.session_state.errors_df is None:
+    if not has_results():
         return
 
     cleaned_df = st.session_state.cleaned_df
@@ -209,7 +293,7 @@ def render_error_details():
     error_type_list = []
     for _, row in errors_df.iterrows():
         for et in str(row["错误类型"]).split("; "):
-            error_type_list.append(et.strip())
+            error_type_list.append(normalize_error_type(et.strip()))
     error_type_series = pd.Series(error_type_list, name="错误类型")
 
     st.markdown("### 📉 错误类型统计")
@@ -240,7 +324,7 @@ def render_error_details():
 
 
 def render_download_section():
-    if st.session_state.cleaned_df is None and st.session_state.errors_df is None:
+    if not has_results():
         return
 
     st.markdown("---")
@@ -283,17 +367,36 @@ def render_clear_cache():
     if st.session_state.validation_done:
         st.markdown("---")
         if st.button("🗑️ 清除缓存并重新上传", use_container_width=True):
-            st.session_state.cleaned_df = None
-            st.session_state.errors_df = None
-            st.session_state.original_df = None
-            st.session_state.validation_done = False
+            clear_results(clear_shared=True)
             st.session_state.upload_key += 1
+            st.session_state.current_upload_id = None
             st.rerun()
+
+
+def normalize_error_type(error_text):
+    if error_text.startswith("金额"):
+        return "金额异常"
+    if error_text.startswith("活动不存在") or error_text == "活动名称缺失":
+        return "活动不存在"
+    if error_text.startswith("重复签到"):
+        return "重复签到"
+    if error_text == "姓名缺失":
+        return "姓名缺失"
+    return error_text
+
+
+def render_no_result_notice(role):
+    if has_results():
+        return
+    if role == ROLE_ADMIN:
+        return
+    st.info("暂无可查看的清洗结果，请等待管理员上传并完成清洗。")
 
 
 def main():
     st.set_page_config(page_title="手作体验活动数据清洗平台", page_icon="🎨", layout="wide")
     init_session_state()
+    load_shared_results()
     render_sidebar()
 
     st.title("🎨 手作体验活动数据清洗平台")
@@ -309,11 +412,12 @@ def main():
         render_clear_cache()
 
     elif role == ROLE_USER:
+        render_no_result_notice(role)
         render_cleaned_results()
         render_download_section()
 
     elif role == ROLE_AUDITOR:
-        render_cleaned_results()
+        render_no_result_notice(role)
         render_error_details()
         st.info("🔒 审计员角色：仅可查看错误明细，无法修改数据或重新上传。")
 
